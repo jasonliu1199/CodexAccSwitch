@@ -1,4 +1,9 @@
-# Codex Account Switch
+# Codex Account Switch (CodexAccSwitch)
+
+Codex account switcher for OpenAI Codex CLI on macOS.
+Manage multiple Codex `auth.json` profiles, switch accounts safely, and launch a menu bar switcher app.
+
+Keywords: codex account switcher, codex auth manager, codex profile switch, openai codex account switch, codex menubar app.
 
 Codex account switching toolkit with:
 
@@ -11,6 +16,7 @@ Codex account switching toolkit with:
 - Switches active auth to another saved profile
 - Backs up current auth before each switch
 - Shows which profile is currently active
+- Works with default `~/.codex` and custom `CODEX_HOME`
 
 ## Install
 
