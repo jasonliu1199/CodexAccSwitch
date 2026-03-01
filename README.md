@@ -1,6 +1,9 @@
 # Codex Account Switch
 
-Simple CLI tool for switching between multiple Codex accounts by managing `auth.json` profiles.
+Codex account switching toolkit with:
+
+- CLI (`codex-account-switch`)
+- macOS Menu Bar app (`Codex Account Switch.app`)
 
 ## What it does
 
@@ -34,6 +37,34 @@ ln -s "$(pwd)/codex-account-switch" /usr/local/bin/codex-account-switch
 ./codex-account-switch rename personal alt
 ./codex-account-switch delete alt
 ```
+
+## macOS Menu Bar App
+
+Build the app bundle:
+
+```bash
+./build-menubar-app.sh
+```
+
+Launch it:
+
+```bash
+open "./dist/Codex Account Switch.app"
+```
+
+Or one command build + launch:
+
+```bash
+./run-menubar.sh
+```
+
+Menu features:
+
+- Show active profile in menu bar (`Cdx:<name>`)
+- Click a profile to switch
+- Save current auth as a new profile
+- Delete saved profiles
+- Open profile folder in Finder
 
 ## Storage layout
 
