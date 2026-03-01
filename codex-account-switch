@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
+AUTH_FILE="${CODEX_HOME_DIR}/auth.json"
+STORE_DIR="${CODEX_HOME_DIR}/account-switch/profiles"
+BACKUP_DIR="${CODEX_HOME_DIR}/account-switch/backups"
+
+die() {
+  echo "Error: $*" >&2
+  exit 1
+}
+
+usage() {
+  cat <<'EOF'
+Codex Account Switch
+
+Usage:
+  codex-account-switch save <name>      Save current ~/.codex/auth.json as a profile
+  codex-account-switch switch <name>    Switch active auth.json to a saved profile
+  codex-account-switch list             List saved profiles
+  codex-account-switch status           Show which saved profile is currently active
+  codex-account-switch delete <name>    Delete a saved profile
+  codex-account-switch rename <old> <new> Rename a saved profile
+  codex-account-switch help             Show this help
+
+Environment:
+  CODEX_HOME   Override Codex home directory (default: ~/.codex)
+
+Notes:
+  - Profile names may only contain letters, numbers, dot, underscore, and dash.
+  - Every switch creates a timestamped backup of the previous auth.json.
+EOF
+}
+
+ensure_dirs() {
+  mkdir -p "$STORE_DIR" "$BACKUP_DIR"
+}
+
+validate_name() {
+  local name="$1"
+  [[ -n "$name" ]] || die "Profile name cannot be empty."
+  [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || die "Invalid profile name: $name"
+}
+
+profile_path() {
+  local name="$1"
+  echo "${STORE_DIR}/${name}.json"
+}
+
+require_auth() {
+  [[ -f "$AUTH_FILE" ]] || die "Auth file not found: $AUTH_FILE"
+}
+
+file_hash() {
+  local path="$1"
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$path" | awk '{print $1}'
+  else
+    openssl dgst -sha256 "$path" | awk '{print $2}'
+  fi
+}
+
+active_profile() {
+  [[ -f "$AUTH_FILE" ]] || return 1
+  local auth_hash
+  auth_hash="$(file_hash "$AUTH_FILE")"
+  local p_hash f
+  shopt -s nullglob
+  for f in "$STORE_DIR"/*.json; do
+    p_hash="$(file_hash "$f")"
+    if [[ "$p_hash" == "$auth_hash" ]]; then
+      basename "$f" .json
+      return 0
+    fi
+  done
+  return 1
+}
+
+cmd_save() {
+  local name="$1"
+  validate_name "$name"
+  ensure_dirs
+  require_auth
+  local dest
+  dest="$(profile_path "$name")"
+  cp "$AUTH_FILE" "$dest"
+  chmod 600 "$dest" 2>/dev/null || true
+  echo "Saved profile: $name"
+  echo "Path: $dest"
+}
+
+cmd_switch() {
+  local name="$1"
+  validate_name "$name"
+  ensure_dirs
+  local src
+  src="$(profile_path "$name")"
+  [[ -f "$src" ]] || die "Profile not found: $name"
+
+  if [[ -f "$AUTH_FILE" ]]; then
+    local ts backup
+    ts="$(date +%Y%m%d-%H%M%S)"
+    backup="${BACKUP_DIR}/auth-${ts}.json"
+    cp "$AUTH_FILE" "$backup"
+    chmod 600 "$backup" 2>/dev/null || true
+    echo "Backed up current auth to: $backup"
+  else
+    mkdir -p "$CODEX_HOME_DIR"
+  fi
+
+  cp "$src" "$AUTH_FILE"
+  chmod 600 "$AUTH_FILE" 2>/dev/null || true
+  echo "Switched active profile to: $name"
+}
+
+cmd_list() {
+  ensure_dirs
+  local active=""
+  if active="$(active_profile 2>/dev/null)"; then
+    :
+  else
+    active=""
+  fi
+
+  local found=0 f name marker
+  shopt -s nullglob
+  for f in "$STORE_DIR"/*.json; do
+    found=1
+    name="$(basename "$f" .json)"
+    marker=" "
+    if [[ -n "$active" && "$name" == "$active" ]]; then
+      marker="*"
+    fi
+    printf "%s %s\n" "$marker" "$name"
+  done
+
+  if [[ "$found" -eq 0 ]]; then
+    echo "No saved profiles."
+    return 0
+  fi
+
+  if [[ -z "$active" && -f "$AUTH_FILE" ]]; then
+    echo
+    echo "Current auth.json does not match any saved profile."
+  fi
+}
+
+cmd_status() {
+  ensure_dirs
+  if [[ ! -f "$AUTH_FILE" ]]; then
+    echo "No active auth file found at: $AUTH_FILE"
+    return 0
+  fi
+
+  local active
+  if active="$(active_profile 2>/dev/null)"; then
+    echo "Active profile: $active"
+  else
+    echo "Active auth.json does not match any saved profile."
+  fi
+}
+
+cmd_delete() {
+  local name="$1"
+  validate_name "$name"
+  local target
+  target="$(profile_path "$name")"
+  [[ -f "$target" ]] || die "Profile not found: $name"
+  rm -f "$target"
+  echo "Deleted profile: $name"
+}
+
+cmd_rename() {
+  local old_name="$1"
+  local new_name="$2"
+  validate_name "$old_name"
+  validate_name "$new_name"
+  local src dest
+  src="$(profile_path "$old_name")"
+  dest="$(profile_path "$new_name")"
+  [[ -f "$src" ]] || die "Profile not found: $old_name"
+  [[ ! -f "$dest" ]] || die "Target profile already exists: $new_name"
+  mv "$src" "$dest"
+  echo "Renamed profile: $old_name -> $new_name"
+}
+
+main() {
+  local cmd="${1:-help}"
+  case "$cmd" in
+    save)
+      [[ $# -eq 2 ]] || die "Usage: codex-account-switch save <name>"
+      cmd_save "$2"
+      ;;
+    switch)
+      [[ $# -eq 2 ]] || die "Usage: codex-account-switch switch <name>"
+      cmd_switch "$2"
+      ;;
+    list)
+      [[ $# -eq 1 ]] || die "Usage: codex-account-switch list"
+      cmd_list
+      ;;
+    status)
+      [[ $# -eq 1 ]] || die "Usage: codex-account-switch status"
+      cmd_status
+      ;;
+    delete)
+      [[ $# -eq 2 ]] || die "Usage: codex-account-switch delete <name>"
+      cmd_delete "$2"
+      ;;
+    rename)
+      [[ $# -eq 3 ]] || die "Usage: codex-account-switch rename <old> <new>"
+      cmd_rename "$2" "$3"
+      ;;
+    help|-h|--help)
+      usage
+      ;;
+    *)
+      usage
+      die "Unknown command: $cmd"
+      ;;
+  esac
+}
+
+main "$@"
