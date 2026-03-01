@@ -190,6 +190,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = AccountStore()
     private var statusItem: NSStatusItem?
     private var refreshTimer: Timer?
+    private var relaunchTimer: Timer?
+    private var pendingRelaunchPaths = Set<String>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -203,6 +205,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         refreshTimer?.invalidate()
         refreshTimer = nil
+        relaunchTimer?.invalidate()
+        relaunchTimer = nil
     }
 
     @objc private func switchProfile(_ sender: NSMenuItem) {
@@ -292,24 +296,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        pendingRelaunchPaths = relaunchPaths
         for app in runningTargets {
             _ = app.terminate()
         }
+        scheduleRelaunchWhenCodexFullyExits()
+    }
 
-        for app in runningTargets {
-            if !waitForTermination(of: app, timeout: 3.0) {
-                _ = app.forceTerminate()
-                _ = waitForTermination(of: app, timeout: 1.0)
+    private func scheduleRelaunchWhenCodexFullyExits() {
+        relaunchTimer?.invalidate()
+        relaunchTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] timer in
+            guard let self else {
+                timer.invalidate()
+                return
             }
-        }
 
-        if relaunchPaths.isEmpty {
-            try launchDefaultCodex()
-            return
-        }
+            let stillRunning = !self.codexRunningApplications().isEmpty
+            if stillRunning {
+                return
+            }
 
-        for path in relaunchPaths.sorted() {
-            try openApp(arguments: [path])
+            timer.invalidate()
+            self.relaunchTimer = nil
+            let paths = self.pendingRelaunchPaths
+            self.pendingRelaunchPaths.removeAll()
+
+            do {
+                if paths.isEmpty {
+                    try self.launchDefaultCodex()
+                } else {
+                    for path in paths.sorted() {
+                        try self.openApp(arguments: [path])
+                    }
+                }
+            } catch {
+                self.showError("Switched profile, but failed to reopen Codex automatically.\n\(error.localizedDescription)")
+            }
         }
     }
 
@@ -342,15 +364,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return true
         }
         return false
-    }
-
-    @discardableResult
-    private func waitForTermination(of app: NSRunningApplication, timeout: TimeInterval) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        while !app.isTerminated && Date() < deadline {
-            _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1))
-        }
-        return app.isTerminated
     }
 
     private func launchDefaultCodex() throws {
