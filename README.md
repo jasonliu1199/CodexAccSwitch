@@ -61,7 +61,7 @@ Or one command build + launch:
 Menu features:
 
 - Show active profile in menu bar (`Cdx:<name>`)
-- Click a profile to switch
+- Click a profile to switch (auto closes and reopens Codex app)
 - Save current auth as a new profile
 - Delete saved profiles
 - Open profile folder in Finder

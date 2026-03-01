@@ -176,6 +176,17 @@ private extension FileManager {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private enum RestartError: LocalizedError {
+        case launchFailed(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .launchFailed(let message):
+                return message
+            }
+        }
+    }
+
     private let store = AccountStore()
     private var statusItem: NSStatusItem?
     private var refreshTimer: Timer?
@@ -196,8 +207,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func switchProfile(_ sender: NSMenuItem) {
         guard let name = sender.representedObject as? String else { return }
-        runAndRefresh {
+        do {
             try store.switchToProfile(name)
+            rebuildMenu()
+
+            do {
+                try restartCodexDesktop()
+            } catch {
+                showError("Switched to \(name), but failed to restart Codex automatically.\n\(error.localizedDescription)")
+            }
+        } catch {
+            showError(error.localizedDescription)
         }
     }
 
@@ -255,6 +275,103 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             rebuildMenu()
         } catch {
             showError(error.localizedDescription)
+        }
+    }
+
+    private func restartCodexDesktop() throws {
+        let runningTargets = codexRunningApplications()
+        var relaunchPaths = Set<String>()
+        for app in runningTargets {
+            if let path = app.bundleURL?.path {
+                relaunchPaths.insert(path)
+            }
+        }
+
+        if runningTargets.isEmpty {
+            try launchDefaultCodex()
+            return
+        }
+
+        for app in runningTargets {
+            _ = app.terminate()
+        }
+
+        for app in runningTargets {
+            if !waitForTermination(of: app, timeout: 3.0) {
+                _ = app.forceTerminate()
+                _ = waitForTermination(of: app, timeout: 1.0)
+            }
+        }
+
+        if relaunchPaths.isEmpty {
+            try launchDefaultCodex()
+            return
+        }
+
+        for path in relaunchPaths.sorted() {
+            try openApp(arguments: [path])
+        }
+    }
+
+    private func codexRunningApplications() -> [NSRunningApplication] {
+        let currentPID = ProcessInfo.processInfo.processIdentifier
+        let currentBundleID = Bundle.main.bundleIdentifier
+
+        return NSWorkspace.shared.runningApplications.filter { app in
+            if app.processIdentifier == currentPID { return false }
+            if let currentBundleID, app.bundleIdentifier == currentBundleID { return false }
+            return isLikelyCodexApp(app)
+        }
+    }
+
+    private func isLikelyCodexApp(_ app: NSRunningApplication) -> Bool {
+        let name = app.localizedName?.lowercased() ?? ""
+        let bundleID = app.bundleIdentifier?.lowercased() ?? ""
+        let appFile = app.bundleURL?.lastPathComponent.lowercased() ?? ""
+
+        if name == "codex" || appFile == "codex.app" {
+            return true
+        }
+        if bundleID == "com.openai.codex" {
+            return true
+        }
+        if bundleID.contains("codex"), !bundleID.contains("account-switch") {
+            return true
+        }
+        if name.contains("codex"), !name.contains("account switch") {
+            return true
+        }
+        return false
+    }
+
+    @discardableResult
+    private func waitForTermination(of app: NSRunningApplication, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !app.isTerminated && Date() < deadline {
+            _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.1))
+        }
+        return app.isTerminated
+    }
+
+    private func launchDefaultCodex() throws {
+        do {
+            try openApp(arguments: ["-a", "Codex"])
+        } catch {
+            throw RestartError.launchFailed(
+                "Could not open the Codex app automatically. Please make sure 'Codex' is installed in /Applications."
+            )
+        }
+    }
+
+    private func openApp(arguments: [String]) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = arguments
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            let argText = arguments.joined(separator: " ")
+            throw RestartError.launchFailed("open \(argText) failed with exit code \(process.terminationStatus).")
         }
     }
 
